@@ -27,7 +27,7 @@ function Register() {
     <div className="auth-container">
       <div className="auth-box">
         <h2>Create Account</h2>
-        <p className="subtitle">Signup</p>
+        <p className="subtitle">Join HIT App</p>
         <form onSubmit={handleSubmit}>
           <label>Username</label>
           <input 

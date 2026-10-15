@@ -29,7 +29,7 @@ function Login() {
   return (
     <div className="auth-container">
       <div className="auth-box">
-        <h2>Login </h2>
+        <h2>Login - HIT App</h2>
         <p className="subtitle">Track Your Habits</p>
         <form onSubmit={handleSubmit}>
           <label>Username</label>
