@@ -1,0 +1,35 @@
+<form  action=abc.html  method=post>
+username<input  type=text  name=t1  size=50px placeholder="enter name" maxlength=5 value="clcike"><br><br>
+password<input  type=password  name=t2>
+<input  type=radio  name=s1  value=male>male 
+<input  type=radio  name=s1 value=female>female 
+<input  type=checkbox  name=c2  value=true>check term and condtion
+<input  type=file>
+<input  type=date>
+<input  type=number>
+<input  type=email>
+<input  type=color>
+<input  type=time>
+<input  type=submit  value="clicke">
+<input  type=reset>
+</form>
+
+<table>
+<tr>
+	<th>Username</th><th><input  type=text></th></tr>
+	<tr>
+	<th>Password</th><th><input  type=text></th></tr>
+	</table>
+<select>
+   <option>java</option>
+   <option>asp</option>
+   <option>php</option>
+   </select>
+  <div style="border:2px  solid  blue;height:100px;background:red;color:white">
+  <h1> welcome</h1>
+  </div>
+  
+  <div align=center>
+  <h1> resume</h1>
+  </div>
+ <button>clicke</button>
