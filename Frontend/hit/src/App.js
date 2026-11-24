@@ -6,6 +6,7 @@ import Dashboard from './Dashboard';
 import MyHabits from "./MyHabits";
 import CalendarView from "./CalendarView";
 import Layout from "./Layout";
+import Mypage from "./Mypage"
 
 function App() {
   return (

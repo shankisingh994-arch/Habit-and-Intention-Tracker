@@ -52,7 +52,7 @@ function Login() {
             required 
           />
 
-          <button type="submit" className="btn-primary">Login</button>
+          <button type="submit" className="btn-primary">Signin</button>
         </form>
         {msg && <p className="message">{msg}</p>}
         <p className="link-text">

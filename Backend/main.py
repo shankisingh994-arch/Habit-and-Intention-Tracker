@@ -17,10 +17,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 ph = PasswordHasher()
 
-# IMPORTANT: app created first
 app = FastAPI()
 
-# CORS MUST be before any routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -56,7 +54,7 @@ class DailyHabit(Base):
     goal_id = Column(Integer, ForeignKey("goals.id", ondelete="SET NULL"), nullable=True)
     habit_name = Column(String(150), nullable=False)
     description = Column(Text)
-    frequency = Column(String(20), default="daily") # daily/weekly
+    frequency = Column(String(20), default="daily")
     streak_count = Column(Integer, default=0)
     last_completed_date = Column(Date, nullable=True)
     is_completed_today = Column(Boolean, default=False)
@@ -70,13 +68,12 @@ class HabitLog(Base):
     completed_date = Column(Date, default=datetime.utcnow)
     is_completed = Column(Boolean, default=True)
 
-# --- NEW MODELS: Intentions + Reminder Rules ---
 class Intention(Base):
     __tablename__ = "intentions"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     intention_text = Column(Text, nullable=False)
-    intention_type = Column(String(50), default="general") # learning, health, work
+    intention_type = Column(String(50), default="general")
     planned_date = Column(Date, nullable=True)
     is_done = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
@@ -86,9 +83,9 @@ class ReminderRule(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     habit_id = Column(Integer, nullable=True)
-    habit_type = Column(String(20), default="daily") # daily / weekly
+    habit_type = Column(String(20), default="daily")
     reminder_time = Column(Time, nullable=False)
-    reminder_days = Column(String(50), default="Daily") # Mon,Wed,Fri or Daily
+    reminder_days = Column(String(50), default="Daily")
     is_active = Column(Boolean, default=True)
     extra_data = Column(JSON, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
@@ -108,36 +105,29 @@ class HabitCreate(BaseModel):
     description: Optional[str] = None
     goal_id: Optional[int] = None
     frequency: str = "daily"
-
 class HabitUpdate(BaseModel):
     habit_name: Optional[str] = None
     description: Optional[str] = None
-    goal_id: Optional[int] = None
+    goal_id: Optional[str] = None
     frequency: Optional[str] = None
-
 class GoalCreate(BaseModel):
     title: str
     description: Optional[str] = None
-
-# --- NEW SCHEMAS ---
 class IntentionCreate(BaseModel):
     intention_text: str
     intention_type: Optional[str] = "general"
     planned_date: Optional[date] = None
-
 class IntentionUpdate(BaseModel):
     intention_text: Optional[str] = None
     intention_type: Optional[str] = None
     planned_date: Optional[date] = None
     is_done: Optional[bool] = None
-
 class ReminderCreate(BaseModel):
     habit_id: Optional[int] = None
     habit_type: str = "daily"
     reminder_time: time
     reminder_days: str = "Daily"
     is_active: Optional[bool] = True
-
 class ReminderUpdate(BaseModel):
     habit_id: Optional[int] = None
     habit_type: Optional[str] = None
@@ -161,6 +151,22 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
+# Helper: Daily Reset + Missed Streak Reset
+def auto_reset_habits(user_id: int, db: Session):
+    today = datetime.utcnow().date()
+    habits = db.query(DailyHabit).filter(DailyHabit.user_id == user_id).all()
+    changed = False
+    for h in habits:
+        if h.last_completed_date and h.last_completed_date < today:
+            h.is_completed_today = False
+            changed = True
+            # Agar kal bhi miss kiya (gap > 1 day) to streak 0
+            if h.last_completed_date < today - timedelta(days=1):
+                h.streak_count = 0
+                changed = True
+    if changed:
+        db.commit()
+
 @app.post("/auth/register", status_code=201)
 def register(payload: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter((User.email == payload.email) | (User.username == payload.username)).first()
@@ -183,12 +189,12 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/dashboard")
 def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    auto_reset_habits(user.id, db)
     total = db.query(DailyHabit).filter(DailyHabit.user_id == user.id).count()
     completed = db.query(DailyHabit).filter(DailyHabit.user_id == user.id, DailyHabit.is_completed_today==True).count()
     streak = db.query(func.max(DailyHabit.streak_count)).filter(DailyHabit.user_id == user.id).scalar() or 0
     return {"username": user.username, "today_completed": completed, "today_total": total, "streak": streak, "total_habits": total}
 
-# --- FULL CRUD FOR HABITS ---
 @app.post("/habits", status_code=201)
 def create_habit(payload: HabitCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     h = DailyHabit(user_id=user.id, habit_name=payload.habit_name, description=payload.description, goal_id=payload.goal_id, frequency=payload.frequency)
@@ -197,6 +203,7 @@ def create_habit(payload: HabitCreate, user: User = Depends(get_current_user), d
 
 @app.get("/habits")
 def list_habits(frequency: Optional[str] = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    auto_reset_habits(user.id, db)
     query = db.query(DailyHabit).filter(DailyHabit.user_id==user.id)
     if frequency: query = query.filter(DailyHabit.frequency == frequency)
     return query.order_by(DailyHabit.created_at.desc()).all()
@@ -212,16 +219,26 @@ def update_habit(habit_id: int, payload: HabitUpdate, user: User = Depends(get_c
     db.commit(); db.refresh(habit)
     return habit
 
+# FIXED STREAK LOGIC - 7 Days Running
 @app.patch("/habits/{habit_id}/toggle")
 def toggle_habit(habit_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     habit = db.query(DailyHabit).filter(DailyHabit.id==habit_id, DailyHabit.user_id==user.id).first()
     if not habit: raise HTTPException(404, "Habit not found")
     today = datetime.utcnow().date()
     if not habit.is_completed_today:
-        habit.is_completed_today = True; habit.streak_count += 1; habit.last_completed_date = today
+        # Streak logic: kal kiya tha to +1, gap aaya to 1 se restart
+        if habit.last_completed_date == today - timedelta(days=1):
+            habit.streak_count += 1
+        elif habit.last_completed_date == today:
+            pass
+        else:
+            habit.streak_count = 1
+        habit.is_completed_today = True
+        habit.last_completed_date = today
         db.add(HabitLog(habit_id=habit.id, user_id=user.id, completed_date=today, is_completed=True))
     else:
-        habit.is_completed_today = False; habit.streak_count = max(0, habit.streak_count - 1)
+        habit.is_completed_today = False
+        habit.streak_count = max(0, habit.streak_count - 1)
         db.query(HabitLog).filter(HabitLog.habit_id==habit.id, HabitLog.completed_date==today).delete()
     db.commit(); db.refresh(habit)
     return habit
@@ -240,9 +257,7 @@ def get_calendar(month: int = datetime.utcnow().month, year: int = datetime.utcn
     for log in logs: data[str(log.completed_date)].append(log.habit_id)
     return {"logs": data, "month": month, "year": year}
 
-# ======================================================
-# --- NEW: INTENTIONS ---
-# ======================================================
+# --- INTENTIONS ---
 @app.post("/intentions", status_code=201)
 def create_intention(payload: IntentionCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     item = Intention(user_id=user.id, intention_text=payload.intention_text, intention_type=payload.intention_type, planned_date=payload.planned_date or datetime.utcnow().date())
@@ -279,12 +294,9 @@ def delete_intention(intention_id: int, user: User = Depends(get_current_user), 
     db.delete(item); db.commit()
     return {"message": "Deleted"}
 
-# ======================================================
-# --- NEW: REMINDER RULES ---
-# ======================================================
+# --- REMINDER RULES ---
 @app.post("/reminders", status_code=201)
 def create_reminder(payload: ReminderCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # agar habit_id diya hai to check karo habit user ki hai
     if payload.habit_id:
         h = db.query(DailyHabit).filter(DailyHabit.id==payload.habit_id, DailyHabit.user_id==user.id).first()
         if not h: raise HTTPException(404, "Habit not found")
@@ -315,33 +327,72 @@ def delete_reminder(reminder_id: int, user: User = Depends(get_current_user), db
     db.delete(r); db.commit()
     return {"message": "Deleted"}
 
-# ======================================================
-# --- NEW: SUMMARY / DASHBOARD WITH CHART.JS ---
-# ======================================================
+# NEW: Due Reminders - jo habit aaj abhi tak complete nahi hui
+@app.get("/reminders/due")
+def due_reminders(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    auto_reset_habits(user.id, db)
+    now = datetime.utcnow().time()
+    today = datetime.utcnow().date()
+    weekday = today.strftime("%a") # Mon, Tue...
+    reminders = db.query(ReminderRule).filter(ReminderRule.user_id==user.id, ReminderRule.is_active==True).all()
+    due = []
+    for r in reminders:
+        # Time check: reminder time aa gaya hai
+        if r.reminder_time <= now:
+            # Day check
+            if r.reminder_days.lower() == "daily" or weekday.lower() in r.reminder_days.lower():
+                habit = None
+                if r.habit_id:
+                    habit = db.query(DailyHabit).filter(DailyHabit.id==r.habit_id, DailyHabit.user_id==user.id).first()
+                    # Agar aaj complete hai to reminder mat bhejo
+                    if habit and habit.is_completed_today:
+                        continue
+                due.append({
+                    "reminder_id": r.id,
+                    "habit_id": r.habit_id,
+                    "habit_name": habit.habit_name if habit else "Habit",
+                    "reminder_time": str(r.reminder_time),
+                    "message": f"Time ho gaya! {habit.habit_name if habit else 'Habit'} complete karo, warna streak toot jayega."
+                })
+    return due
+
+# --- SUMMARY ---
 @app.get("/summary/weekly")
 def weekly_summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Dashboard.js ko [Mon, Tue, Wed, Thu, Fri, Sat, Sun] = 7 numbers chahiye
     today = datetime.utcnow().date()
-    monday = today - timedelta(days=today.weekday()) # Monday of this week
+    monday = today - timedelta(days=today.weekday())
     result = []
-    labels = []
     for i in range(7):
         day = monday + timedelta(days=i)
         count = db.query(HabitLog).filter(HabitLog.user_id==user.id, HabitLog.completed_date==day).count()
         result.append(count)
-        labels.append(day.strftime("%a"))
+    return result
+
+@app.get("/habits/progress")
+def habits_progress(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    auto_reset_habits(user.id, db)
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=6)
+    habits = db.query(DailyHabit).filter(DailyHabit.user_id==user.id).all()
+    result = []
+    for h in habits:
+        logs = db.query(HabitLog).filter(HabitLog.habit_id==h.id, HabitLog.completed_date >= start_date, HabitLog.completed_date <= today).count()
+        created = h.created_at.date() if h.created_at else start_date
+        total_days = (today - max(created, start_date)).days + 1
+        total_days = max(1, min(total_days, 7))
+        percent = round((logs / total_days) * 100)
+        result.append({"habit_id": h.id, "habit_name": h.habit_name, "completed_days": logs, "total_days": total_days, "percent": percent, "streak": h.streak_count, "is_completed_today": h.is_completed_today})
     return result
 
 @app.get("/summary")
 def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    auto_reset_habits(user.id, db)
     total = db.query(DailyHabit).filter(DailyHabit.user_id==user.id).count()
     completed_today = db.query(DailyHabit).filter(DailyHabit.user_id==user.id, DailyHabit.is_completed_today==True).count()
     streak = db.query(func.max(DailyHabit.streak_count)).filter(DailyHabit.user_id==user.id).scalar() or 0
     total_intentions = db.query(Intention).filter(Intention.user_id==user.id).count()
     done_intentions = db.query(Intention).filter(Intention.user_id==user.id, Intention.is_done==True).count()
     total_reminders = db.query(ReminderRule).filter(ReminderRule.user_id==user.id, ReminderRule.is_active==True).count()
-
-    # Weekly chart data
     today = datetime.utcnow().date()
     monday = today - timedelta(days=today.weekday())
     weekly = []
@@ -349,15 +400,4 @@ def summary(user: User = Depends(get_current_user), db: Session = Depends(get_db
         day = monday + timedelta(days=i)
         c = db.query(HabitLog).filter(HabitLog.user_id==user.id, HabitLog.completed_date==day).count()
         weekly.append({"day": day.strftime("%a"), "date": str(day), "completed": c})
-
-    return {
-        "today_completed": completed_today,
-        "today_total": total,
-        "streak": streak,
-        "total_habits": total,
-        "intentions_total": total_intentions,
-        "intentions_done": done_intentions,
-        "active_reminders": total_reminders,
-        "weekly": weekly,
-        "weekly_counts": [w["completed"] for w in weekly]
-    }
+    return {"today_completed": completed_today, "today_total": total, "streak": streak, "total_habits": total, "intentions_total": total_intentions, "intentions_done": done_intentions, "active_reminders": total_reminders, "weekly": weekly, "weekly_counts": [w["completed"] for w in weekly]}

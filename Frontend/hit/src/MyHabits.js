@@ -1,79 +1,71 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+
 const API = "http://localhost:8000";
 
-export default function MyHabits() {
+function MyHabits({ onHabitChange }) {
   const [habits, setHabits] = useState([]);
-  const [filter, setFilter] = useState('all'); // all | daily | weekly
-  const [form, setForm] = useState({ habit_name: '', description: '', frequency: 'daily' });
-  const [editId, setEditId] = useState(null);
-  const token = localStorage.getItem('token');
-  const config = { headers: { Authorization: `Bearer ${token}` } };
+  const [newHabit, setNewHabit] = useState('');
+  const [description, setDescription] = useState('');
+
+  const getHeaders = () => {
+    const token = localStorage.getItem('token');
+    return { Authorization: `Bearer ${token}` };
+  };
 
   const fetchHabits = () => {
-    const url = filter === 'all' ? `${API}/habits` : `${API}/habits?frequency=${filter}`;
-    axios.get(url, config).then(res => setHabits(res.data));
+    axios.get(`${API}/habits`, { headers: getHeaders() })
+      .then(res => setHabits(res.data))
+      .catch(() => {});
   };
 
-  useEffect(() => { fetchHabits(); }, [filter]);
+  useEffect(() => { fetchHabits(); }, []);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (editId) {
-      // EDIT
-      axios.put(`${API}/habits/${editId}`, form, config).then(() => {
-        setEditId(null); setForm({ habit_name: '', description: '', frequency: 'daily' }); fetchHabits();
-      });
-    } else {
-      // CREATE
-      axios.post(`${API}/habits`, form, config).then(() => {
-        setForm({ habit_name: '', description: '', frequency: 'daily' }); fetchHabits();
-      });
-    }
+  const addHabit = async () => {
+    if (!newHabit.trim()) return;
+    await axios.post(`${API}/habits`, { habit_name: newHabit, description, frequency: 'daily' }, { headers: getHeaders() });
+    setNewHabit(''); setDescription('');
+    fetchHabits();
+    if (onHabitChange) onHabitChange();
   };
 
-  const handleEdit = (h) => {
-    setEditId(h.id);
-    setForm({ habit_name: h.habit_name, description: h.description || '', frequency: h.frequency });
-    window.scrollTo(0,0);
+  const toggleHabit = async (id) => {
+    await axios.patch(`${API}/habits/${id}/toggle`, {}, { headers: getHeaders() });
+    fetchHabits();
+    if (onHabitChange) onHabitChange();
   };
 
-  const handleToggle = (id) => { axios.patch(`${API}/habits/${id}/toggle`, {}, config).then(fetchHabits); };
-  const handleDelete = (id) => { if(window.confirm('Delete?')) axios.delete(`${API}/habits/${id}`, config).then(fetchHabits); };
+  const deleteHabit = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this habit?')) return;
+    await axios.delete(`${API}/habits/${id}`, { headers: getHeaders() });
+    fetchHabits();
+    if (onHabitChange) onHabitChange();
+  };
 
   return (
     <div>
-      <h3>{editId ? 'Edit Habit' : 'Add New Habit'}</h3>
-      <form onSubmit={handleSubmit} style={{display:'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap'}}>
-        <input required placeholder="Habit name" value={form.habit_name} onChange={e=>setForm({...form, habit_name:e.target.value})} />
-        <input placeholder="Description" value={form.description} onChange={e=>setForm({...form, description:e.target.value})} />
-        <select value={form.frequency} onChange={e=>setForm({...form, frequency:e.target.value})}>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-        </select>
-        <button type="submit">{editId ? 'Update' : 'Add'}</button>
-        {editId && <button type="button" onClick={()=>{setEditId(null); setForm({habit_name:'', description:'', frequency:'daily'})}}>Cancel</button>}
-      </form>
-
-      <div style={{marginBottom:'15px'}}>
-        <button onClick={()=>setFilter('all')} style={{fontWeight: filter==='all'?'bold':''}}>All</button> | 
-        <button onClick={()=>setFilter('daily')} style={{fontWeight: filter==='daily'?'bold':''}}> Daily</button> | 
-        <button onClick={()=>setFilter('weekly')} style={{fontWeight: filter==='weekly'?'bold':''}}> Weekly</button>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '15px' }}>
+        <input value={newHabit} onChange={e => setNewHabit(e.target.value)} placeholder="e.g. Running" style={{ flex: 1, padding: '8px' }} />
+        <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (optional)" style={{ flex: 1, padding: '8px' }} />
+        <button onClick={addHabit}>Add Habit</button>
       </div>
 
-      {habits.map(h=>(
-        <div key={h.id} style={{border:'1px solid #ccc', padding:'10px', marginBottom:'8px', display:'flex', justifyContent:'space-between', background: h.is_completed_today ? '#e6ffea' : 'white'}}>
+      {habits.length === 0 ? <p>No habits yet.</p> : habits.map(h => (
+        <div key={h.id} style={{ border: '1px solid #ddd', padding: '12px', borderRadius: '8px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: h.is_completed_today ? '#E8F5E9' : '#fff' }}>
           <div>
-            <b>{h.habit_name}</b> <small>({h.frequency})</small> - {h.description}
-            <div>Streak: {h.streak_count} {h.is_completed_today ? '✅' : ''}</div>
+            <b>{h.habit_name}</b> <small style={{ color: '#888' }}>ID: {h.id}</small>
+            <div style={{ fontSize: '13px', color: '#666' }}>{h.description || ''}</div>
+            <div style={{ fontSize: '13px' }}>Streak: <b>{h.streak_count} days</b> {h.is_completed_today ? 'Completed Today' : 'Pending Today'} {h.last_completed_date ? `| Last Completed: ${h.last_completed_date}` : ''}</div>
           </div>
-          <div>
-            <button onClick={()=>handleToggle(h.id)}>{h.is_completed_today ? 'Undo' : 'Done'}</button>
-            <button onClick={()=>handleEdit(h)}>Edit</button>
-            <button onClick={()=>handleDelete(h.id)}>Delete</button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={() => toggleHabit(h.id)} style={{ background: h.is_completed_today ? '#4CAF50' : '#eee', color: h.is_completed_today ? '#fff' : '#000' }}>
+              {h.is_completed_today ? 'Completed' : 'Mark as Done'}
+            </button>
+            <button onClick={() => deleteHabit(h.id)} style={{ background: '#ffebee' }}>Delete</button>
           </div>
         </div>
       ))}
     </div>
   );
 }
+export default MyHabits;
